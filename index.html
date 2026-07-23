@@ -252,6 +252,8 @@ select.input{cursor:pointer}
 .hrs-ok{background:#D1FAE5;color:#065F46} .hrs-low{background:#FEF3C7;color:#92400E}
 [data-theme=dark] .hrs-ok{background:#022C22;color:#6EE7B7} [data-theme=dark] .hrs-low{background:#2D1C00;color:#FCD34D}
 .day-future{color:var(--txt3);font-size:15px;margin-top:4px} .day-absent{font-size:10.5px;color:var(--err);font-weight:600;opacity:.6;margin-top:4px}
+.day-cell.auto-credit{border-color:rgba(6,182,212,.35);background:rgba(6,182,212,.05)}
+.day-auto-badge{font-size:8.5px;font-weight:700;color:var(--acc);background:rgba(6,182,212,.14);padding:1px 5px;border-radius:8px;display:inline-block;margin-top:3px;letter-spacing:.3px}
 .lm-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:13px}
 .lm-icon{width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;margin-right:7px}
 .lm-icon.ok{background:#D1FAE5;color:#065F46} .lm-icon.err{background:#FEE2E2;color:#991B1B}
@@ -290,6 +292,7 @@ select.input{cursor:pointer}
 .ct-row{display:flex;justify-content:space-between;gap:14px;margin-bottom:3px}
 .ct-row span{color:var(--txt2)} .ct-row strong{color:var(--txt);font-family:var(--font-mono)}
 .ct-hol{color:var(--txt3);font-style:italic} .ct-absent{color:var(--err);font-size:11.5px}
+.ct-auto{color:var(--acc);font-size:11.5px;font-weight:600}
 /* bar animation */
 .chart-bar{transform-box:fill-box;transform-origin:bottom;animation:barRise .42s cubic-bezier(.22,1,.36,1) both}
 @keyframes barRise{from{transform:scaleY(0);opacity:0}to{transform:scaleY(1);opacity:1}}
@@ -315,6 +318,7 @@ select.input{cursor:pointer}
 .dt-row{border-radius:6px;transition:background var(--t);align-items:center}
 .dt-row:hover{background:var(--surf2)} .dt-row.dt-absent{opacity:.4}
 .dt-day{font-weight:600} .dt-hrs{font-weight:600;color:var(--pri);font-family:var(--font-mono)}
+.dt-auto-tag{font-size:8.5px;font-weight:700;color:var(--acc);background:rgba(6,182,212,.14);padding:1px 5px;border-radius:7px;margin-left:5px;letter-spacing:.2px}
 .wk-sum{display:flex;justify-content:space-between;margin-top:9px;padding-top:9px;border-top:1px solid var(--bdr);font-size:11.5px;color:var(--txt2);flex-wrap:wrap;gap:8px}
 
 /* ══ SCHEDULE ═══════════════════════════════════════════ */
@@ -364,6 +368,7 @@ select.input{cursor:pointer}
 .cycle-opt{flex:1;padding:10px 14px;border:1.5px solid var(--bdr);border-radius:10px;cursor:pointer;text-align:center;font-size:12.5px;font-weight:600;color:var(--txt2);transition:all var(--t)}
 .cycle-opt.active{border-color:var(--pri);background:rgba(79,70,229,.07);color:var(--pri)}
 .cycle-opt-sub{display:block;font-size:10.5px;font-weight:400;color:var(--txt3);margin-top:2px}
+.auto-hol-field{margin-top:12px;padding-top:12px;border-top:1px dashed var(--bdr);transition:opacity var(--t)}
 
 /* ══ ADMIN ══════════════════════════════════════════════ */
 .approval-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--bdr);gap:10px;flex-wrap:wrap}
@@ -1321,6 +1326,7 @@ function renderDashboard(d) {
         <span><span class="chart-legend-dot" style="background:var(--warn-l)"></span>Below minimum</span>
         <span><span class="chart-legend-dot" style="background:var(--bdr2)"></span>No punch</span>
         <span><span class="chart-legend-dot" style="background:var(--bdr);opacity:.4"></span>Holiday</span>
+        <span><span class="chart-legend-dot" style="background:var(--acc)"></span>Auto-credited</span>
         <span style="color:var(--err);opacity:.7">— — min</span>
       </div>
     </div>
@@ -1329,18 +1335,37 @@ function renderDashboard(d) {
       <h2 class="card-title">📆 ${periodLabel} Attendance</h2>
       <div class="week-grid">
         ${(d.periodGrid||[]).map(day=>{
+          const workOnHol = d.workOnHolidays;
           const holWorked = day.isHoliday && day.punchIn;
+          const holAuto = day.isHoliday && day.isAutoCredit;
+          // Under workOnHolidays, a holiday with no punch/credit is just a normal
+          // "no entry yet" working day — NOT a red "absent" cell — since the whole
+          // point of the toggle is that holidays behave like ordinary days.
+          const trueAbsent = !day.punchIn && !day.isFuture && !(workOnHol ? false : day.isHoliday) && !holAuto;
           const cellClass = [
             'day-cell',
             day.isToday?'today':'',
             day.isFuture?'future':'',
-            holWorked?'hol-worked':'',
-            !day.punchIn&&!day.isFuture&&!day.isHoliday?'absent':''
+            holAuto?'auto-credit':(holWorked?'hol-worked':''),
+            trueAbsent?'absent':''
           ].filter(Boolean).join(' ');
+          const holTag = day.isHoliday ? (workOnHol?'<span style="color:var(--acc);font-size:7px;display:block;margin-top:1px">WORK</span>':'<span style="color:var(--err-l);font-size:7px;display:block;margin-top:1px">HOL</span>') : '';
+          let bodyHtml;
+          if(day.punchIn) {
+            bodyHtml = `<div class="day-in">▶ ${day.punchIn}</div><div class="day-out${!day.punchOut?' pending':''}">${day.punchOut?'⏹ '+day.punchOut:'● live'}</div><div class="day-hrs ${day.mins>0?(day.mins>=480?'hrs-ok':'hrs-low'):''}">${day.mins?toHrsMin(day.mins):'—'}</div>`;
+          } else if(holAuto) {
+            bodyHtml = `<div class="day-hrs hrs-ok">${toHrsMin(day.mins)}</div><div class="day-auto-badge">⚡ Auto</div>`;
+          } else if(day.isFuture) {
+            bodyHtml = `<div class="day-future">—</div>`;
+          } else if(day.isHoliday && !workOnHol) {
+            bodyHtml = `<div class="day-absent">Off</div>`;
+          } else {
+            bodyHtml = `<div class="day-absent">No entry</div>`;
+          }
           return `<div class="${cellClass}">
-            <div class="day-name">${day.day}${day.isHoliday?'<span style="color:var(--err-l);font-size:7px;display:block;margin-top:1px">HOL</span>':''}</div>
+            <div class="day-name">${day.day}${holTag}</div>
             <div class="day-date">${day.date.slice(5)}</div>
-            ${day.punchIn?`<div class="day-in">▶ ${day.punchIn}</div><div class="day-out${!day.punchOut?' pending':''}">${day.punchOut?'⏹ '+day.punchOut:'● live'}</div><div class="day-hrs ${day.mins>0?(day.mins>=480?'hrs-ok':'hrs-low'):''}">${day.mins?toHrsMin(day.mins):'—'}</div>`:day.isFuture?`<div class="day-future">—</div>`:`<div class="day-absent">${day.isHoliday?'Off':'No entry'}</div>`}
+            ${bodyHtml}
           </div>`;
         }).join('')}
       </div>
@@ -1398,10 +1423,11 @@ function getChartDateRange(range) {
   if(range==='60d')  return {start:dhakaDateOffset(-59), end:today, label:'Last 2 Months'};
   if(range==='10wd') {
     const hdays=new Set((S.settings?.holidayDays||'Friday,Saturday').split(',').map(d=>d.trim()));
+    const workOnHol=!!S.settings?.workOnHolidays;
     const DNAMES=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     let count=0, cur=dhakaNow();
     while(count<10) {
-      if(!hdays.has(DNAMES[cur.getDay()])) count++;
+      if(workOnHol || !hdays.has(DNAMES[cur.getDay()])) count++;
       if(count<10) cur.setDate(cur.getDate()-1);
     }
     return {start:localDateStr(cur), end:today, label:'Last 10 Working Days'};
@@ -1422,7 +1448,7 @@ async function loadChartData(range) {
   if(lbl) lbl.textContent=label+': '+fmtRange(start,end);
   chartArea.innerHTML=`<div class="chart-loading"><div class="spinner sm"></div></div>`;
   try {
-    const res=await API.auth('getWeekPunches',{start,end});
+    const res=await API.auth('getWeekPunches',{start,end,includeEffective:'true'});
     if(!res.success){chartArea.innerHTML=`<p class="text-muted" style="padding:20px 0">Failed to load chart data.</p>`;return;}
     const items=buildDateItems(start,end,res.punches||[]);
     renderBarChart(items, S.settings?.minDayHrs||8);
@@ -1433,6 +1459,8 @@ async function loadChartData(range) {
 function buildDateItems(start, end, punches) {
   const items=[];
   const hdays=new Set((S.settings?.holidayDays||'Friday,Saturday').split(',').map(d=>d.trim()));
+  const workOnHol=!!S.settings?.workOnHolidays;
+  const autoHolHrs=S.settings?.autoHolidayHrs||0;
   const DNAMES=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const today=dhakaDateStr();
   let cur=new Date(start+'T00:00:00');
@@ -1441,12 +1469,28 @@ function buildDateItems(start, end, punches) {
     const ds=localDateStr(cur);
     const dayName=DNAMES[cur.getDay()];
     const punch=punches.find(p=>p.date===ds);
+    const rawIsHoliday=hdays.has(dayName);
+    // "isHoliday" for display purposes only marks it muted/off when the
+    // office policy still treats it as a day off. Under workOnHolidays,
+    // it's rendered like any normal working day.
+    const isHoliday = rawIsHoliday && !workOnHol;
+    const realMins = punch?(parseInt(punch.minutes)||0):0;
+    // Effective minutes from backend (includes auto-credit) when available,
+    // else fall back to a client-side estimate consistent with backend logic.
+    let mins, isAutoCredit;
+    if(punch && punch.effectiveMinutes!==undefined) {
+      mins = punch.effectiveMinutes; isAutoCredit = !!punch.isAutoCredit;
+    } else if(!punch && workOnHol && autoHolHrs>0 && rawIsHoliday && ds<=today) {
+      mins = Math.round(autoHolHrs*60); isAutoCredit = true;
+    } else {
+      mins = realMins; isAutoCredit = false;
+    }
     items.push({
       date:ds, day:dayName.slice(0,3), fullDay:dayName,
-      mins:punch?(parseInt(punch.minutes)||0):0,
+      mins, realMins, isAutoCredit,
       punchIn:punch?.punchIn||'', punchOut:punch?.punchOut||'',
       notes:punch?.notes||'',
-      isHoliday:hdays.has(dayName),
+      isHoliday, rawIsHoliday, workOnHol,
       isToday:ds===today, isFuture:ds>today
     });
     cur.setDate(cur.getDate()+1);
@@ -1476,6 +1520,7 @@ function renderBarChart(dateItems, minDayHrs) {
     <linearGradient id="cg-ok" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6366F1"/><stop offset="100%" stop-color="#4338CA" stop-opacity=".9"/></linearGradient>
     <linearGradient id="cg-low" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#FBBF24"/><stop offset="100%" stop-color="#D97706" stop-opacity=".9"/></linearGradient>
     <linearGradient id="cg-zero" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#CBD5E1"/><stop offset="100%" stop-color="#94A3B8" stop-opacity=".6"/></linearGradient>
+    <linearGradient id="cg-auto" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#22D3EE"/><stop offset="100%" stop-color="#0E7490" stop-opacity=".9"/></linearGradient>
   </defs>`;
   let grid='', bars='', labels='', hovers='';
 
@@ -1495,11 +1540,13 @@ function renderBarChart(dateItems, minDayHrs) {
     const cx=PAD.l+i*barSlotW+barSlotW/2;
     const bx=cx-barW/2;
     const animDelay=(i*0.025).toFixed(3)+'s';
-    
+
     if(item.mins>0) {
       const barH=Math.max(3,(item.mins/maxMins)*plotH);
       const by=PAD.t+plotH-barH;
-      const fill=item.mins>=minDayMins?'url(#cg-ok)':'url(#cg-low)';
+      const fill=item.isAutoCredit?'url(#cg-auto)':(item.mins>=minDayMins?'url(#cg-ok)':'url(#cg-low)');
+      // Only mute opacity for holidays that are STILL treated as off days.
+      // A holiday under workOnHolidays (worked or auto-credited) renders full-strength.
       const op=item.isHoliday?.65:1;
       bars+=`<rect x="${bx}" y="${by}" width="${barW}" height="${barH}" fill="${fill}" opacity="${op}" rx="3" ry="3" class="chart-bar" style="animation-delay:${animDelay}"/>`;
     } else if(!item.isHoliday && !item.isFuture) {
@@ -1519,7 +1566,7 @@ function renderBarChart(dateItems, minDayHrs) {
     }
     // Invisible hover area
     hovers+=`<rect x="${bx-2}" y="${PAD.t}" width="${barW+4}" height="${plotH+4}" fill="transparent" class="chart-bar-hover"
-      data-date="${item.date}" data-mins="${item.mins}" data-in="${item.punchIn}" data-out="${item.punchOut}" data-hol="${item.isHoliday}" data-future="${item.isFuture}"/>`;
+      data-date="${item.date}" data-mins="${item.mins}" data-in="${item.punchIn}" data-out="${item.punchOut}" data-hol="${item.isHoliday}" data-future="${item.isFuture}" data-auto="${item.isAutoCredit}"/>`;
   });
 
   const isMobile = window.innerWidth < 600;
@@ -1554,12 +1601,13 @@ function showChartTip(e, el) {
   const tip=$('chart-tip');
   const date=el.dataset.date, mins=parseInt(el.dataset.mins)||0;
   const pIn=el.dataset.in, pOut=el.dataset.out;
-  const isHol=el.dataset.hol==='true', isFuture=el.dataset.future==='true';
+  const isHol=el.dataset.hol==='true', isFuture=el.dataset.future==='true', isAuto=el.dataset.auto==='true';
   const dateStr=new Date(date+'T00:00:00').toLocaleDateString('en-BD',{weekday:'long',month:'short',day:'numeric'});
   tip.innerHTML=`
     <div class="ct-date">${dateStr}</div>
     ${isHol&&!mins?'<div class="ct-hol">Holiday / Day off</div>':''}
     ${isFuture&&!mins?'<div class="ct-hol">Upcoming</div>':''}
+    ${isAuto?'<div class="ct-auto">⚡ Auto-credited holiday hours</div>':''}
     ${pIn?`<div class="ct-row"><span>▶ Punch In</span><strong>${pIn}</strong></div>`:''}
     ${pOut?`<div class="ct-row"><span>⏹ Punch Out</span><strong>${pOut}</strong></div>`:''}
     ${mins?`<div class="ct-row"><span>⏱ Duration</span><strong>${toHrsMin(mins)}</strong></div>`:(!isHol&&!isFuture?'<div class="ct-absent">No punch recorded</div>':'')}
@@ -1631,12 +1679,12 @@ function renderHistory(history) {
         <div class="week-body" id="wk-${i}" hidden>
           <div class="dt-hdr"><span>Day</span><span>Date</span><span>In</span><span>Out</span><span>Hours</span></div>
           ${(wk.days||[]).map(day=>`
-            <div class="dt-row ${!day.punchIn?'dt-absent':''}">
+            <div class="dt-row ${!day.punchIn&&!day.isAutoCredit?'dt-absent':''}">
               <span class="dt-day">${day.day}</span>
               <span>${day.date.slice(5)}</span>
               <span class="plog-in">${day.punchIn||'—'}</span>
               <span class="plog-out">${day.punchOut||'—'}</span>
-              <span class="dt-hrs">${day.mins?toHrsMin(day.mins):'—'}</span>
+              <span class="dt-hrs">${day.mins?toHrsMin(day.mins):'—'}${day.isAutoCredit?'<span class="dt-auto-tag">⚡Auto</span>':''}</span>
             </div>`).join('')}
           <div class="wk-sum">
             <span>${wk.worked}/${wk.wDays} days attended</span>
@@ -1825,6 +1873,7 @@ function renderSettings(cfg, govHols, persHols) {
         <div class="form-group"><label id="lbl-minwk">Min Hours / ${isNDays?'Cycle':'Week'} (deduction threshold)</label><input type="number" id="s-min-wk" class="input" value="${cfg.minWkHrs||40}" min="1" max="400" step="0.5"></div>
         <div class="form-group"><label>Min Hours / Single Day <span style="font-weight:400;text-transform:none">(indicator only)</span></label><input type="number" id="s-min-day" class="input" value="${cfg.minDayHrs||8}" min="1" max="24" step="0.5"></div>
       </div>
+      ${isNDays?`<p class="hint-text">💡 With "Allow working on holidays" ON, every calendar day counts toward the cycle — e.g. starting <strong>27 Jun</strong> with a 10-day cycle ends <strong>6 Jul</strong> (10 straight days). With it OFF, weekly off-days are skipped and the same cycle stretches to <strong>9 Jul</strong>.</p>`:''}
     </div>
 
     <div class="card">
@@ -1849,9 +1898,16 @@ function renderSettings(cfg, govHols, persHols) {
           </div>
           <div>
             <div style="font-size:13px;font-weight:600;color:var(--txt)">Allow working on holidays</div>
-            <div style="font-size:11.5px;color:var(--txt2);margin-top:2px">When enabled, holiday punch records appear in the dashboard and count towards your hour target</div>
+            <div style="font-size:11.5px;color:var(--txt2);margin-top:2px">When enabled, holidays are treated as normal working days everywhere — they count toward your hour target, appear in the dashboard/stats, and are included in cycle-length calculations</div>
           </div>
         </label>
+      </div>
+      <div class="auto-hol-field" id="auto-hol-field" ${cfg.workOnHolidays?'':'hidden'}>
+        <div class="form-group" style="margin-bottom:6px">
+          <label>Auto Add Working Hours (per holiday, if you don't punch)</label>
+          <input type="number" id="s-auto-hol-hrs" class="input" value="${cfg.autoHolidayHrs||0}" min="0" max="24" step="0.5" placeholder="e.g. 6">
+        </div>
+        <p class="hint-text">💡 If set above 0, any holiday date with <strong>no real punch</strong> automatically gets credited this many hours — e.g. set <strong>6</strong> so every worked-but-unrecorded holiday still counts as 6h. A real punch on that day always overrides this. Set to <strong>0</strong> to require an actual punch on holidays too.</p>
       </div>
     </div>
 
@@ -1867,6 +1923,7 @@ function renderSettings(cfg, govHols, persHols) {
         <strong>${chk.length}</strong> ${chk.length===1?'day':'days'} off per week
         ${chk.length?`<span style="color:var(--txt3);margin-left:6px">(${chk.join(', ')})</span>`:''}
       </div>
+      <p class="hint-text">💡 Uncheck a day here to make it a normal working day permanently — it will never be treated as a holiday, regardless of the toggle above. Checked days are holidays; when "Allow working on holidays" is OFF they're excluded from all calculations, and when ON they're folded in as normal days.</p>
     </div>
 
     <div class="card">
@@ -1919,19 +1976,23 @@ function setCycleType(type) {
 function updateWorkOnHolDisplay() {
   const cb=$('s-work-hol');
   const track=$('hol-toggle-track'), thumb=$('hol-toggle-thumb');
+  const autoField=$('auto-hol-field');
   if(!cb||!track||!thumb) return;
   track.style.background = cb.checked ? 'var(--ok-l)' : 'var(--bdr2)';
   thumb.style.left = cb.checked ? '20px' : '2px';
+  if(autoField) autoField.hidden = !cb.checked;
 }
 async function saveSettings() {
   const hd=[...document.querySelectorAll('.hol-day-cb:checked')].map(c=>c.value).join(',');
   const cycleType=_activeCycleType||(S.settings?.cycleType==='ndays'?'ndays':'weekly');
   const workOnHolidays=$('s-work-hol')?.checked?'true':'false';
+  const autoHolidayHrs=workOnHolidays==='true'?($('s-auto-hol-hrs')?.value||0):0;
   const res=await API.auth('saveSettings',{
     targetHrs:$('s-target').value, minDayHrs:$('s-min-day').value, minWkHrs:$('s-min-wk').value,
     weekStart:$('s-week-start')?.value||'Sunday', salary:$('s-salary').value,
     monthDays:$('s-month-days').value, holidayDays:hd, joinDate:$('s-join').value,
-    cycleType, cycleDays:$('s-cycle-days')?.value||10, salaryCycleStart:$('s-salary-start').value, workOnHolidays
+    cycleType, cycleDays:$('s-cycle-days')?.value||10, salaryCycleStart:$('s-salary-start').value,
+    workOnHolidays, autoHolidayHrs
   });
   if(res.success){ bustTab(); showToast('✅ Settings saved!','success'); S.settings=null; } else showToast(res.message,'error');
 }
