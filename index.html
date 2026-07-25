@@ -1713,9 +1713,17 @@ async function loadSchedule() {
   } catch(err) { if(!hasCached) showToast('Failed to load schedule','error'); }
   finally { setLoading(false); }
 }
+// ─── scheduleHolidaySet: which weekdays read as "off" for class/work ──
+// planning. A raw holiday weekday only counts as off here if the office
+// policy still treats holidays as non-working; once "Allow working on
+// holidays" is on, every day is eligible for classes and work slots.
+function scheduleHolidaySet(cfg) {
+  const raw=new Set((cfg?.holidayDays||'Friday,Saturday').split(',').map(d=>d.trim()));
+  return cfg?.workOnHolidays ? new Set() : raw;
+}
 function renderScheduleTab() {
   const cfg=S.settings||{};
-  const hdays=new Set((cfg.holidayDays||'Friday,Saturday').split(',').map(d=>d.trim()));
+  const hdays = scheduleHolidaySet(cfg);
   $('tab-schedule').innerHTML=`
     <div class="page-hdr"><div><h1 class="page-title">🕘 Class Routine &amp; Planner</h1><p class="page-sub">Add your class slots — the system suggests work windows to meet your hour targets</p></div></div>
     <div class="card">
@@ -1743,7 +1751,7 @@ function renderScheduleTab() {
         <div style="text-align:center;padding:28px 0;color:var(--txt3)">
           <div style="font-size:32px;margin-bottom:9px">🔮</div>
           <p>Add your class routine, then click <strong>Compute</strong> to see optimal work slots.</p>
-          <p style="margin-top:6px;font-size:11.5px">Target: ${cfg.targetHrs||48}h · Min: ${cfg.minWkHrs||40}h · Min/day: ${cfg.minDayHrs||8}h</p>
+          <p style="margin-top:6px;font-size:11.5px">Min/day: ${cfg.minDayHrs||8}h · Max/day: ${cfg.maxDayHrs>0?cfg.maxDayHrs+'h':'No cap'} · Target: ${cfg.targetHrs||48}h${cfg.workOnHolidays?' · Holidays included':''}</p>
         </div>
       </div>
     </div>`;
@@ -1763,13 +1771,13 @@ async function addClassSlot() {
   if(!start||!end){showToast('Start and end times required','error');return;}
   if(start>=end){showToast('End must be after start','error');return;}
   const res=await API.auth('saveClassSlot',{day,start,end,subject});
-  if(res.success){ S.classSlots.push({day,start,end,subject}); showToast(`Class added for ${day}`,'success'); const hdays=new Set((S.settings?.holidayDays||'Friday,Saturday').split(',').map(d=>d.trim())); $('routine-grid').innerHTML=renderRoutineGrid(hdays); $('cls-start').value=$('cls-end').value=$('cls-sub').value=''; }
+  if(res.success){ S.classSlots.push({day,start,end,subject}); showToast(`Class added for ${day}`,'success'); $('routine-grid').innerHTML=renderRoutineGrid(scheduleHolidaySet(S.settings)); $('cls-start').value=$('cls-end').value=$('cls-sub').value=''; }
   else showToast(res.message,'error');
 }
 async function deleteClassSlot(day,start,end) {
   if(!confirm(`Remove ${start}–${end} on ${day}?`)) return;
   const res=await API.auth('deleteClassSlot',{day,start,end});
-  if(res.success){ S.classSlots=S.classSlots.filter(c=>!(c.day===day&&c.start===start&&c.end===end)); showToast('Slot removed','info'); const hdays=new Set((S.settings?.holidayDays||'Friday,Saturday').split(',').map(d=>d.trim())); $('routine-grid').innerHTML=renderRoutineGrid(hdays); if(_schedResult) computeAndRenderSchedule(); }
+  if(res.success){ S.classSlots=S.classSlots.filter(c=>!(c.day===day&&c.start===start&&c.end===end)); showToast('Slot removed','info'); $('routine-grid').innerHTML=renderRoutineGrid(scheduleHolidaySet(S.settings)); if(_schedResult) computeAndRenderSchedule(); }
   else showToast(res.message,'error');
 }
 function computeAndRenderSchedule() {
@@ -1779,13 +1787,22 @@ function computeAndRenderSchedule() {
   const rowsHtml=result.rows.map(r=>{
     const classDesc=r.cls.length?r.cls.map(c=>`${c.start}–${c.end}${c.subject?' ('+c.subject+')':''}`).join(', '):'No classes';
     const tlHtml=buildTimeline(r);
-    let slotHtml=r.wMins>0?`<div class="sug-slot"><span class="sug-slot-time">${r.wStart} → ${r.wEnd}</span><span class="sug-slot-dur">${toHrsMin(r.wMins)}</span><span class="badge ${r.ok?'badge-ok':'badge-warn'}">${r.ok?'✓ OK':'⚠ Short'}</span>${r.warn?`<span style="font-size:11px;color:var(--warn-l)">⚠ ${r.warn}</span>`:''}</div>`:`<div class="sug-slot"><span class="badge badge-err">No free window</span></div>`;
+    const dayBadge=`<span class="badge ${r.ok?'badge-ok':'badge-warn'}">${r.ok?'✓ OK':'⚠ Short'}</span>`;
+    const totalLine = r.classMins>0
+      ? `<span class="sug-slot-dur">${toHrsMin(r.classMins)} class + ${toHrsMin(r.wMins)} work = <strong>${toHrsMin(r.dayTotal)}</strong></span>`
+      : `<span class="sug-slot-dur">${toHrsMin(r.dayTotal)}</span>`;
+    let slotHtml = r.wMins>0
+      ? `<div class="sug-slot"><span class="sug-slot-time">${r.wStart} → ${r.wEnd}</span>${totalLine}${dayBadge}${r.warn?`<span style="font-size:11px;color:var(--warn-l)">⚠ ${r.warn}</span>`:''}</div>`
+      : r.dayTotal>0
+        ? `<div class="sug-slot">${totalLine}${dayBadge}<span style="font-size:11px;color:var(--txt3)">(class hours only — no extra work slot needed/possible)</span>${r.warn?`<span style="font-size:11px;color:var(--warn-l)">⚠ ${r.warn}</span>`:''}</div>`
+        : `<div class="sug-slot"><span class="badge badge-err">No free window</span>${r.warn?`<span style="font-size:11px;color:var(--warn-l)">⚠ ${r.warn}</span>`:''}</div>`;
     return `<div class="sug-row"><div class="sug-day-name">${r.day}${r.cls.length?`<span class="badge badge-neu" style="font-size:10px">${r.cls.length} class${r.cls.length>1?'es':''}</span>`:''}</div><div style="font-size:11.5px;color:var(--txt2);margin-bottom:4px">Classes: ${classDesc}</div>${tlHtml}<div style="font-size:10.5px;color:var(--txt3)">Free window: ${r.fStart||'07:00'} – ${r.fEnd||'22:00'} (${toHrsMin(r.fMins||0)} available)</div>${slotHtml}</div>`;
   }).join('');
-  el.innerHTML=`<div style="font-size:11.5px;color:var(--txt2);margin-bottom:13px">Work window: <strong>07:00 – 22:00</strong> · Min daily: <strong>${cfg.minDayHrs||8}h</strong> · Min: <strong>${cfg.minWkHrs||40}h</strong> · Target: <strong>${cfg.targetHrs||48}h</strong></div>${rowsHtml}
+  const maxDayLabel = result.maxDayHrs ? `${result.maxDayHrs}h` : 'No cap';
+  el.innerHTML=`<div style="font-size:11.5px;color:var(--txt2);margin-bottom:13px">Work window: <strong>07:00 – 22:00</strong> · Min/day: <strong>${result.minDayHrs}h</strong> · Max/day: <strong>${maxDayLabel}</strong> · Min ${cfg.cycleType==='ndays'?'/cycle':'/week'}: <strong>${result.minWkHrs.toFixed(1)}h</strong> · Target: <strong>${result.tgtWkHrs}h</strong>${result.workOnHol?' · <span style="color:var(--acc)">holidays included</span>':''}</div>${rowsHtml}
     <div class="sug-total-bar ${result.belowMin?'card-warn':result.aboveTarget?'card-warn':'card-ok'}" style="margin-top:13px">
-      <div><div class="sug-total-hrs">${toHrsMin(result.total)}<span style="font-size:13px;font-weight:400;color:var(--txt2)">/period</span></div><div class="sug-total-meta">Total suggested work hours</div></div>
-      <div style="text-align:right"><div style="font-size:12.5px;font-weight:600;color:${result.belowMin||result.aboveTarget?'var(--warn-l)':'var(--ok-l)'}">${result.belowMin?`⚠ ${toHrsMin(result.minWk-result.total)} short of ${result.minWkHrs}h`:result.aboveTarget?`⚠ ${toHrsMin(result.total-result.tgtWk)} over ${result.tgtWkHrs}h`:'✓ Meets requirements'}</div><div class="sug-total-meta">Min: ${result.minWkHrs}h | Target: ${result.tgtWkHrs}h</div></div>
+      <div><div class="sug-total-hrs">${toHrsMin(result.total)}<span style="font-size:13px;font-weight:400;color:var(--txt2)">/period</span></div><div class="sug-total-meta">Total hours (class + suggested work)</div></div>
+      <div style="text-align:right"><div style="font-size:12.5px;font-weight:600;color:${result.belowMin||result.aboveTarget?'var(--warn-l)':'var(--ok-l)'}">${result.belowMin?`⚠ ${toHrsMin(result.minWk-result.total)} short of ${result.minWkHrs.toFixed(1)}h min`:result.aboveTarget?`⚠ ${toHrsMin(result.total-result.tgtWk)} over ${result.tgtWkHrs}h target`:'✓ Meets requirements'}</div><div class="sug-total-meta">Min: ${result.minWkHrs.toFixed(1)}h | Target: ${result.tgtWkHrs}h</div></div>
     </div>
     <div style="margin-top:10px;text-align:right"><button class="btn btn-ghost" onclick="copyScheduleText()" style="font-size:11.5px">📋 Copy as Text</button></div>`;
 }
@@ -1793,38 +1810,147 @@ function buildTimeline(r) {
   const TSTART=7*60,SPAN=15*60;
   const tlPct=m=>((m-TSTART)/SPAN*100).toFixed(2)+'%', tlW=m=>(m/SPAN*100).toFixed(2)+'%';
   let segs='';
-  (r.cls||[]).forEach(c=>{const s=pMin(c.start),e=pMin(c.end); if(s>=TSTART&&s<TSTART+SPAN) segs+=`<div class="tl-seg tl-class" style="left:${tlPct(s)};width:${tlW(e-s)}" title="${c.start}–${c.end}${c.subject?' '+c.subject:''}">${c.subject||'Class'}</div>`;});
-  if(r.wMins>0&&r.wS!==undefined) segs+=`<div class="tl-seg tl-work" style="left:${tlPct(r.wS)};width:${tlW(r.wMins)}" title="Work: ${r.wStart}–${r.wEnd}">Work</div>`;
+  (r.cls||[]).forEach(c=>{const s=pMin(c.start),e=pMin(c.end); if(s>=TSTART&&s<TSTART+SPAN) segs+=`<div class="tl-seg tl-class" style="left:${tlPct(s)};width:${tlW(e-s)}" title="${c.start}–${c.end}${c.subject?' '+c.subject:''} (counts toward hours)">${c.subject||'Class'}</div>`;});
+  if(r.wMins>0&&r.wS!==undefined&&r.wS!==null) segs+=`<div class="tl-seg tl-work" style="left:${tlPct(r.wS)};width:${tlW(r.wMins)}" title="Work: ${r.wStart}–${r.wEnd} (single consecutive block)">Work</div>`;
   return `<div class="tl-wrap">${segs}</div><div class="tl-axis"><span>07:00</span><span>10:00</span><span>13:00</span><span>16:00</span><span>19:00</span><span>22:00</span></div>`;
 }
+// ─── effectiveMinWkMins: weekly/cycle minimum working hours ──────
+// Requirement (iii): for the ndays cycle type, if the user has left
+// Min Hours/Cycle at 0 (unset), default to a per-7-day rate — 36h if
+// holidays are off, 42h if "Allow working on holidays" is on — prorated
+// to the configured cycle length. Weekly-cycle mode always uses the
+// explicit Min Hours/Week field (never silently defaulted to 36/42,
+// since the user scoped that default to the ndays case specifically).
+function effectiveMinWkMins(cfg) {
+  if (cfg.cycleType === 'ndays') {
+    const cycleDays = Math.max(1, cfg.cycleDays || 10);
+    if (cfg.minWkHrs && cfg.minWkHrs > 0) return cfg.minWkHrs * 60;
+    const weeklyRate = cfg.workOnHolidays ? 42 : 36;
+    return Math.round(weeklyRate * (cycleDays / 7) * 60);
+  }
+  return (cfg.minWkHrs || 40) * 60;
+}
+
+// ─── computeSchedule: dynamic work-window suggestion ──────────────
+// Honors all six planning constraints:
+//  (i)   max working hours/day        — cfg.maxDayHrs (0/blank = uncapped)
+//  (ii)  min working hours/day        — cfg.minDayHrs
+//  (iii) weekly/cycle min hours       — effectiveMinWkMins() above
+//  (iv)  working on holidays allowed  — cfg.workOnHolidays decides which
+//        weekdays are even eligible for a suggested slot
+//  (v)   one CONSECUTIVE block/day    — exactly one contiguous free-time
+//        gap is chosen per day; top-up/trim only grow or shrink that same
+//        block, never add a second one
+//  (vi)  class hours count toward the day's total — class time is added
+//        directly into dayTotal, and the work slot only needs to cover
+//        the remainder up to the min/max bounds
 function computeSchedule(classSlots, cfg) {
-  const WSTART=7*60,WEND=22*60,minDay=(cfg.minDayHrs||8)*60,tgtWk=(cfg.targetHrs||48)*60,minWk=(cfg.minWkHrs||40)*60;
+  const WSTART=7*60, WEND=22*60;
+  const minDay=(cfg.minDayHrs||8)*60;
+  const maxDay=(cfg.maxDayHrs>0?cfg.maxDayHrs:24)*60; // uncapped falls back to a full-day ceiling
+  const tgtWk=(cfg.targetHrs||48)*60;
+  const minWk=effectiveMinWkMins(cfg);
+  const workOnHol=!!cfg.workOnHolidays;
   const hdays=new Set((cfg.holidayDays||'Friday,Saturday').split(',').map(d=>d.trim()));
-  const wDays=ALL_DAYS.filter(d=>!hdays.has(d));
-  let rows=[],total=0;
+  const wDays = workOnHol ? [...ALL_DAYS] : ALL_DAYS.filter(d=>!hdays.has(d));
+
+  let rows=[], total=0;
   for(const day of wDays){
     const cls=classSlots.filter(c=>c.day===day).sort((a,b)=>pMin(a.start)-pMin(b.start));
+    const classMins = cls.reduce((s,c)=>s+Math.max(0,pMin(c.end)-pMin(c.start)),0);
+
     const free=[]; let cur=WSTART;
     for(const c of cls){const s=pMin(c.start),e=pMin(c.end);if(cur<s) free.push({s:cur,e:s,d:s-cur});cur=Math.max(cur,e);}
     if(cur<WEND) free.push({s:cur,e:WEND,d:WEND-cur});
+
+    const neededForMin = Math.max(0, minDay - classMins);
+    const roomToMax = Math.max(0, maxDay - classMins);
+
+    if (roomToMax <= 0) {
+      const dayTotal = Math.min(classMins, maxDay);
+      total += dayTotal;
+      rows.push({day,cls,classMins,free,chosen:null,wS:null,wE:null,wMins:0,dayTotal,
+        ok:dayTotal>=minDay, fMins:0, fStart:mToT(WSTART), fEnd:mToT(WEND),
+        warn: classMins>maxDay ? `Class hours (${toHrsMin(classMins)}) already exceed the ${toHrsMin(maxDay)} daily max` : null});
+      continue;
+    }
+
     const lastEnd=cls.length?Math.max(...cls.map(c=>pMin(c.end))):WSTART;
     let chosen=null;
-    const postFit=free.filter(w=>w.s>=lastEnd&&w.d>=minDay);
-    if(postFit.length) chosen=postFit[0];
-    else{const fits=free.filter(w=>w.d>=minDay);chosen=fits.length?fits.reduce((a,b)=>b.d>a.d?b:a):free.length?free.reduce((a,b)=>b.d>a.d?b:a):null;}
-    if(!chosen){rows.push({day,cls,free,chosen:null,wS:null,wE:null,wMins:0,ok:false,fMins:0,fStart:mToT(WSTART),fEnd:mToT(WEND)});continue;}
-    const wMins=Math.min(chosen.d,minDay),wS=chosen.s,wE=wS+wMins;
-    total+=wMins;
-    rows.push({day,cls,free,chosen,wS,wE,wMins,wStart:mToT(wS),wEnd:mToT(wE),fStart:mToT(chosen.s),fEnd:mToT(chosen.e),fMins:chosen.d,ok:wMins>=minDay,warn:wMins<minDay?`Only ${toHrsMin(wMins)} available`:null});
+    const postFit=free.filter(w=>w.s>=lastEnd&&w.d>=Math.min(neededForMin,w.d));
+    if(postFit.length) chosen=postFit.reduce((a,b)=>b.d>a.d?b:a);
+    else if(free.length) chosen=free.reduce((a,b)=>b.d>a.d?b:a);
+
+    if(!chosen||chosen.d<=0){
+      const dayTotal=classMins;
+      rows.push({day,cls,classMins,free,chosen:null,wS:null,wE:null,wMins:0,dayTotal,
+        ok:dayTotal>=minDay, fMins:0, fStart:mToT(WSTART), fEnd:mToT(WEND),
+        warn: dayTotal<minDay?`No free window — only ${toHrsMin(classMins)} from classes`:null});
+      continue;
+    }
+
+    const wMins = Math.max(0, Math.min(chosen.d, roomToMax, Math.max(neededForMin, 0)));
+    const wS=chosen.s, wE=wS+wMins;
+    const dayTotal = classMins+wMins;
+    total += dayTotal;
+    rows.push({day,cls,classMins,free,chosen,wS,wE,wMins,dayTotal,
+      wStart:mToT(wS),wEnd:mToT(wE),fStart:mToT(chosen.s),fEnd:mToT(chosen.e),fMins:chosen.d,
+      ok:dayTotal>=minDay,
+      warn:dayTotal<minDay?`Only ${toHrsMin(dayTotal)} achievable (class+work)`:null});
   }
-  if(total>tgtWk){let excess=total-tgtWk;const sorted=[...rows].filter(r=>r.wMins>0).sort((a,b)=>b.fMins-a.fMins);for(const r of sorted){if(excess<=0)break;const trim=Math.min(excess,Math.max(0,r.wMins-Math.floor(minDay*0.5)));if(trim>0){r.wMins-=trim;r.wE=r.wS+r.wMins;r.wEnd=mToT(r.wE);total-=trim;excess-=trim;r.ok=r.wMins>=minDay;if(!r.ok)r.warn=`Reduced to ${toHrsMin(r.wMins)} to stay within target`;}}}
-  return{rows,total,totalHrs:toHrsMin(total),minWk,tgtWk,minWkHrs:minWk/60,tgtWkHrs:tgtWk/60,meetsMin:total>=minWk,aboveTarget:total>tgtWk,belowMin:total<minWk};
+
+  // Top up toward the weekly/cycle target using spare per-day room, extending
+  // the SAME chosen block (never adding a second slot on a day).
+  if (total < tgtWk) {
+    let need = tgtWk - total;
+    const candidates = rows.filter(r=>r.chosen && r.dayTotal < maxDay).sort((a,b)=>{
+      const roomA = Math.min(a.chosen.d - a.wMins, maxDay - a.dayTotal);
+      const roomB = Math.min(b.chosen.d - b.wMins, maxDay - b.dayTotal);
+      return roomB - roomA;
+    });
+    for (const r of candidates) {
+      if (need<=0) break;
+      const room = Math.min(r.chosen.d - r.wMins, maxDay - r.dayTotal);
+      if (room<=0) continue;
+      const add = Math.min(room, need);
+      r.wMins+=add; r.wE=r.wS+r.wMins; r.wEnd=mToT(r.wE);
+      r.dayTotal+=add; r.ok=r.dayTotal>=minDay;
+      total+=add; need-=add;
+    }
+  }
+
+  // Trim if over the weekly/cycle target, shortening the single work block
+  // from its end, never fragmenting it and never cutting into class time.
+  if (total > tgtWk) {
+    let excess = total - tgtWk;
+    const sorted=[...rows].filter(r=>r.wMins>0).sort((a,b)=>b.wMins-a.wMins);
+    for (const r of sorted) {
+      if (excess<=0) break;
+      const floor = Math.max(0, minDay - r.classMins);
+      const trimmable = Math.max(0, r.wMins - floor);
+      const trim = Math.min(excess, trimmable);
+      if (trim>0) {
+        r.wMins-=trim; r.wE=r.wS+r.wMins; r.wEnd=mToT(r.wE);
+        r.dayTotal-=trim; total-=trim; excess-=trim;
+        r.ok=r.dayTotal>=minDay;
+        if(!r.ok) r.warn=`Reduced to ${toHrsMin(r.dayTotal)} total to stay within the weekly/cycle target`;
+      }
+    }
+  }
+
+  return{rows,total,totalHrs:toHrsMin(total),minWk,tgtWk,minWkHrs:minWk/60,tgtWkHrs:tgtWk/60,
+    minDayHrs:minDay/60,maxDayHrs:cfg.maxDayHrs>0?cfg.maxDayHrs:null,
+    meetsMin:total>=minWk,aboveTarget:total>tgtWk,belowMin:total<minWk,workOnHol};
 }
 function copyScheduleText() {
   if(!_schedResult) return;
   const lines=['PunchTrack — Suggested Work Schedule','─'.repeat(40)];
-  _schedResult.rows.forEach(r=>{lines.push(`${r.day.padEnd(12)}: ${r.wMins>0?r.wStart+' → '+r.wEnd+' ('+toHrsMin(r.wMins)+')':`No available window`}`);});
-  lines.push('─'.repeat(40)); lines.push(`Total: ${toHrsMin(_schedResult.total)} | Min: ${_schedResult.minWkHrs}h | Target: ${_schedResult.tgtWkHrs}h`);
+  _schedResult.rows.forEach(r=>{
+    const workPart = r.wMins>0 ? `${r.wStart} → ${r.wEnd} work` : 'no work slot';
+    const classPart = r.classMins>0 ? `${toHrsMin(r.classMins)} class + ` : '';
+    lines.push(`${r.day.padEnd(12)}: ${workPart} — total ${classPart}${r.wMins>0?toHrsMin(r.wMins)+' work':''} = ${toHrsMin(r.dayTotal)}`);
+  });
+  lines.push('─'.repeat(40)); lines.push(`Total: ${toHrsMin(_schedResult.total)} | Min: ${_schedResult.minWkHrs.toFixed(1)}h | Target: ${_schedResult.tgtWkHrs}h`);
   navigator.clipboard.writeText(lines.join('\n')).then(()=>showToast('Schedule copied!','success')).catch(()=>showToast('Copy failed','warn'));
 }
 
@@ -1870,9 +1996,11 @@ function renderSettings(cfg, govHols, persHols) {
         <div class="form-group" id="field-weekstart" ${isNDays?'hidden':''}><label>Week Starts On</label><select id="s-week-start" class="input">${WDAYS.map(d=>`<option value="${d}"${cfg.weekStart===d?' selected':''}>${d}</option>`).join('')}</select></div>
         <div class="form-group" id="field-cycledays" ${!isNDays?'hidden':''}><label>Cycle Length (working days)</label><input type="number" id="s-cycle-days" class="input" value="${cfg.cycleDays||10}" min="1" max="60"></div>
         <div class="form-group"><label id="lbl-target">Target Hours / ${isNDays?'Cycle':'Week'}</label><input type="number" id="s-target" class="input" value="${cfg.targetHrs||48}" min="1" max="400" step="0.5"></div>
-        <div class="form-group"><label id="lbl-minwk">Min Hours / ${isNDays?'Cycle':'Week'} (deduction threshold)</label><input type="number" id="s-min-wk" class="input" value="${cfg.minWkHrs||40}" min="1" max="400" step="0.5"></div>
+        <div class="form-group"><label id="lbl-minwk">Min Hours / ${isNDays?'Cycle':'Week'} (deduction threshold)${isNDays?' <span style="font-weight:400;text-transform:none">— optional</span>':''}</label><input type="number" id="s-min-wk" class="input" value="${cfg.minWkHrs||''}" min="0" max="400" step="0.5" placeholder="${isNDays?`auto: ${(cfg.effectiveMinWkHrs||(cfg.workOnHolidays?42:36)).toFixed(1)}h`:'40'}"></div>
         <div class="form-group"><label>Min Hours / Single Day <span style="font-weight:400;text-transform:none">(indicator only)</span></label><input type="number" id="s-min-day" class="input" value="${cfg.minDayHrs||8}" min="1" max="24" step="0.5"></div>
+        <div class="form-group"><label>Max Hours / Single Day <span style="font-weight:400;text-transform:none">(caps counted hours)</span></label><input type="number" id="s-max-day" class="input" value="${cfg.maxDayHrs||''}" min="0" max="24" step="0.5" placeholder="No cap"></div>
       </div>
+      <p class="hint-text">💡 <strong>Max Hours/Day</strong> caps how many hours in a single day count toward your target, stats, and salary — e.g. set it to <strong>10</strong> so working 11 hours still only counts as 10. Leave blank for no cap. <strong>Min Hours/${isNDays?'Cycle':'Week'}</strong>${isNDays?' — leave blank to auto-use 36h (or 42h if holidays are worked) per 7 days, scaled to your cycle length':''} drives both the salary-deduction threshold and the Schedule tab's suggested hours, so it always means the same number in both places.</p>
       ${isNDays?`<p class="hint-text">💡 With "Allow working on holidays" ON, every calendar day counts toward the cycle — e.g. starting <strong>27 Jun</strong> with a 10-day cycle ends <strong>6 Jul</strong> (10 straight days). With it OFF, weekly off-days are skipped and the same cycle stretches to <strong>9 Jul</strong>.</p>`:''}
     </div>
 
@@ -1968,9 +2096,16 @@ function setCycleType(type) {
   $('cyc-ndays').classList.toggle('active',isNDays);
   $('field-weekstart').hidden=isNDays;
   $('field-cycledays').hidden=!isNDays;
-  const lt=$('lbl-target'), lm=$('lbl-minwk');
+  const lt=$('lbl-target'), lm=$('lbl-minwk'), mwInput=$('s-min-wk');
   if(lt) lt.textContent=`Target Hours / ${isNDays?'Cycle':'Week'}`;
-  if(lm) lm.textContent=`Min Hours / ${isNDays?'Cycle':'Week'} (deduction threshold)`;
+  if(lm) lm.innerHTML=`Min Hours / ${isNDays?'Cycle':'Week'} (deduction threshold)${isNDays?' <span style="font-weight:400;text-transform:none">— optional</span>':''}`;
+  if(mwInput){
+    const workOnHol=!!S.settings?.workOnHolidays;
+    const cycleDays=Math.max(1,parseInt($('s-cycle-days')?.value)||S.settings?.cycleDays||10);
+    const rate=workOnHol?42:36;
+    const autoHrs=(rate*(cycleDays/7)).toFixed(1);
+    mwInput.placeholder = isNDays ? `auto: ${autoHrs}h` : '40';
+  }
 }
 
 function updateWorkOnHolDisplay() {
@@ -1987,8 +2122,9 @@ async function saveSettings() {
   const cycleType=_activeCycleType||(S.settings?.cycleType==='ndays'?'ndays':'weekly');
   const workOnHolidays=$('s-work-hol')?.checked?'true':'false';
   const autoHolidayHrs=workOnHolidays==='true'?($('s-auto-hol-hrs')?.value||0):0;
+  const maxDayHrs=$('s-max-day')?.value||0;
   const res=await API.auth('saveSettings',{
-    targetHrs:$('s-target').value, minDayHrs:$('s-min-day').value, minWkHrs:$('s-min-wk').value,
+    targetHrs:$('s-target').value, minDayHrs:$('s-min-day').value, maxDayHrs, minWkHrs:$('s-min-wk').value||0,
     weekStart:$('s-week-start')?.value||'Sunday', salary:$('s-salary').value,
     monthDays:$('s-month-days').value, holidayDays:hd, joinDate:$('s-join').value,
     cycleType, cycleDays:$('s-cycle-days')?.value||10, salaryCycleStart:$('s-salary-start').value,
