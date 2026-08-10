@@ -13,7 +13,6 @@
 <link rel="apple-touch-icon" href="https://drive.google.com/thumbnail?id=1A67s-vnFMLz708oTVKxWq9IUUflbkMuh&sz=w64">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" crossorigin="anonymous">
 
 <style>
 /* ══ DESIGN TOKENS ══════════════════════════════════════ */
@@ -778,7 +777,7 @@ button,.btn,.day-check,.nav-item,.range-pill,.collapse-toggle,.week-hdr{touch-ac
         <div class="uava" id="nav-ava">?</div>
         <span class="tnav-uname" id="nav-name">—</span>
       </div>
-      <button class="tnav-btn tnav-logout-btn" onclick="doLogout()" title="Sign out"><i class="fa fa-sign-out" aria-hidden="true"></i><span class="logout-lbl">Log out</span></button>
+      <button class="tnav-btn tnav-logout-btn" onclick="doLogout()" title="Sign out">🚪<span class="logout-lbl">Log out</span></button>
       <button class="tnav-btn tnav-hamburger" id="hamburger" onclick="toggleMobileMenu()">☰</button>
     </div>
   </nav>
@@ -1089,13 +1088,14 @@ async function setupPunchPage() {
   try {
     const today = dhakaDateStr();
     const histStart = dhakaDateOffset(-20); // 21 days history
-    const [tR,pR,hR] = await Promise.all([
+    const [tR,hR] = await Promise.all([
       API.auth('getTimeTaps'),
-      API.auth('getTodayPunch'),
       API.auth('getWeekPunches',{start:histStart,end:today})
     ]);
     const taps=(tR.success&&tR.taps)||[];
-    renderPunchPage(taps, pR.success?pR.punch:null, hR.success?hR.punches:[], today, histStart);
+    const punches=hR.success?hR.punches:[];
+    const todayPunch=punches.find(p=>p.date===today)||null; // getWeekPunches' range already covers today
+    renderPunchPage(taps, todayPunch, punches, today, histStart);
   } catch(err) { showToast('Failed to load punch data','error'); }
   finally { setLoading(false); }
 }
@@ -1253,9 +1253,9 @@ async function loadDashboard() {
   if (!hasCached) $('tab-dashboard').innerHTML=`<div class="loading-ph"><div class="spinner"></div></div>`;
   setLoading(true);
   try {
-    const [dashR, settR] = await Promise.all([API.auth('getDashboard'), API.auth('getSettings')]);
+    const dashR = await API.auth('getDashboard');
     if(!dashR.success){if(!hasCached)showToast(dashR.message||'Failed','error');return;}
-    if(settR.success) S.settings=settR.settings;
+    if(dashR.settings) S.settings=dashR.settings;
     renderDashboard(dashR.data);
     markTabFresh('dashboard');
     cacheTabHtml('dashboard');
@@ -1350,6 +1350,7 @@ function renderDashboard(d) {
             trueAbsent?'absent':''
           ].filter(Boolean).join(' ');
           const holTag = day.isHoliday ? (workOnHol?'<span style="color:var(--acc);font-size:7px;display:block;margin-top:1px">WORK</span>':'<span style="color:var(--err-l);font-size:7px;display:block;margin-top:1px">HOL</span>') : '';
+          const swapTag = day.isSwapped ? '<span style="color:var(--acc);font-size:7px;display:block;margin-top:1px;font-weight:700">🔄 SWAP</span>' : '';
           let bodyHtml;
           if(day.punchIn) {
             bodyHtml = `<div class="day-in">▶ ${day.punchIn}</div><div class="day-out${!day.punchOut?' pending':''}">${day.punchOut?'⏹ '+day.punchOut:'● live'}</div><div class="day-hrs ${day.mins>0?(day.mins>=480?'hrs-ok':'hrs-low'):''}">${day.mins?toHrsMin(day.mins):'—'}</div>`;
@@ -1363,7 +1364,7 @@ function renderDashboard(d) {
             bodyHtml = `<div class="day-absent">No entry</div>`;
           }
           return `<div class="${cellClass}">
-            <div class="day-name">${day.day}${holTag}</div>
+            <div class="day-name">${day.day}${swapTag||holTag}</div>
             <div class="day-date">${day.date.slice(5)}</div>
             ${bodyHtml}
           </div>`;
@@ -1388,6 +1389,13 @@ function renderDashboard(d) {
             <div><span>Shortfall</span><strong ${(lm.shortfallHrs||0)>0?'class="text-err"':''}>${lm.shortfallHrs??'—'}h</strong></div>
             ${(lm.hourDed||0)>0?`<div><span>Hour deduction</span><strong class="text-err">BDT ${lm.hourDed.toLocaleString()}</strong></div>`:''}
             ${(lm.dedHols||0)>0?`<div><span>Leave deduction (${lm.dedHols}d)</span><strong class="text-err">BDT ${lm.dedHolDed.toLocaleString()}</strong></div>`:''}
+            ${(lm.preJoinDed||0)>0?`<div><span>Pre-join deduction (${lm.preJoinDays}d)</span><strong class="text-err">BDT ${lm.preJoinDed.toLocaleString()}</strong></div>`:''}
+            ${(lm.taxAmount||0)>0?`<div><span>Tax</span><strong class="text-err">BDT ${lm.taxAmount.toLocaleString()}</strong></div>`:''}
+          </div>
+          <div class="divider"></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <div><span style="font-size:10.5px;color:var(--txt2);font-weight:500">Gross Salary</span><div style="font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--txt)">BDT ${(lm.salary||0).toLocaleString()}</div></div>
+            <div style="text-align:right"><span style="font-size:10.5px;color:var(--txt2);font-weight:500">Net Payable</span><div style="font-family:var(--font-mono);font-size:19px;font-weight:700;color:var(--ok-l)">BDT ${(lm.payable||0).toLocaleString()}</div></div>
           </div>`}
     </div>`;
 }
@@ -1450,17 +1458,18 @@ async function loadChartData(range) {
   try {
     const res=await API.auth('getWeekPunches',{start,end,includeEffective:'true'});
     if(!res.success){chartArea.innerHTML=`<p class="text-muted" style="padding:20px 0">Failed to load chart data.</p>`;return;}
-    const items=buildDateItems(start,end,res.punches||[]);
+    const items=buildDateItems(start,end,res.punches||[],res.weekendWorkedDates||[],res.replacementOffDates||[]);
     renderBarChart(items, S.settings?.minDayHrs||8);
     renderChartSummary(items, S.settings?.minDayHrs||8);
   } catch(e) { chartArea.innerHTML=`<p class="text-muted" style="padding:20px 0">Error loading chart data.</p>`; }
 }
 
-function buildDateItems(start, end, punches) {
+function buildDateItems(start, end, punches, weekendWorkedDates, replacementOffDates) {
   const items=[];
   const hdays=new Set((S.settings?.holidayDays||'Friday,Saturday').split(',').map(d=>d.trim()));
   const workOnHol=!!S.settings?.workOnHolidays;
   const autoHolHrs=S.settings?.autoHolidayHrs||0;
+  const toWorkSet=new Set(weekendWorkedDates||[]), toOffSet=new Set(replacementOffDates||[]);
   const DNAMES=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const today=dhakaDateStr();
   let cur=new Date(start+'T00:00:00');
@@ -1469,11 +1478,14 @@ function buildDateItems(start, end, punches) {
     const ds=localDateStr(cur);
     const dayName=DNAMES[cur.getDay()];
     const punch=punches.find(p=>p.date===ds);
-    const rawIsHoliday=hdays.has(dayName);
-    // "isHoliday" for display purposes only marks it muted/off when the
-    // office policy still treats it as a day off. Under workOnHolidays,
-    // it's rendered like any normal working day.
-    const isHoliday = rawIsHoliday && !workOnHol;
+    const isSwapped=toWorkSet.has(ds)||toOffSet.has(ds);
+    // Weekend Adjustment swaps outrank the weekly pattern, same priority as
+    // the backend's isHolidayActive: a swapped-to-working date is never a
+    // holiday, a swapped-to-off date always is, regardless of workOnHolidays.
+    let rawIsHoliday, isHoliday;
+    if(toWorkSet.has(ds)) { rawIsHoliday=false; isHoliday=false; }
+    else if(toOffSet.has(ds)) { rawIsHoliday=true; isHoliday=true; }
+    else { rawIsHoliday=hdays.has(dayName); isHoliday=rawIsHoliday && !workOnHol; }
     const realMins = punch?(parseInt(punch.minutes)||0):0;
     // Effective minutes from backend (includes auto-credit) when available,
     // else fall back to a client-side estimate consistent with backend logic.
@@ -1487,7 +1499,7 @@ function buildDateItems(start, end, punches) {
     }
     items.push({
       date:ds, day:dayName.slice(0,3), fullDay:dayName,
-      mins, realMins, isAutoCredit,
+      mins, realMins, isAutoCredit, isSwapped,
       punchIn:punch?.punchIn||'', punchOut:punch?.punchOut||'',
       notes:punch?.notes||'',
       isHoliday, rawIsHoliday, workOnHol,
@@ -1566,7 +1578,7 @@ function renderBarChart(dateItems, minDayHrs) {
     }
     // Invisible hover area
     hovers+=`<rect x="${bx-2}" y="${PAD.t}" width="${barW+4}" height="${plotH+4}" fill="transparent" class="chart-bar-hover"
-      data-date="${item.date}" data-mins="${item.mins}" data-in="${item.punchIn}" data-out="${item.punchOut}" data-hol="${item.isHoliday}" data-future="${item.isFuture}" data-auto="${item.isAutoCredit}"/>`;
+      data-date="${item.date}" data-mins="${item.mins}" data-in="${item.punchIn}" data-out="${item.punchOut}" data-hol="${item.isHoliday}" data-future="${item.isFuture}" data-auto="${item.isAutoCredit}" data-swap="${item.isSwapped}"/>`;
   });
 
   const isMobile = window.innerWidth < 600;
@@ -1601,13 +1613,14 @@ function showChartTip(e, el) {
   const tip=$('chart-tip');
   const date=el.dataset.date, mins=parseInt(el.dataset.mins)||0;
   const pIn=el.dataset.in, pOut=el.dataset.out;
-  const isHol=el.dataset.hol==='true', isFuture=el.dataset.future==='true', isAuto=el.dataset.auto==='true';
+  const isHol=el.dataset.hol==='true', isFuture=el.dataset.future==='true', isAuto=el.dataset.auto==='true', isSwap=el.dataset.swap==='true';
   const dateStr=new Date(date+'T00:00:00').toLocaleDateString('en-BD',{weekday:'long',month:'short',day:'numeric'});
   tip.innerHTML=`
     <div class="ct-date">${dateStr}</div>
     ${isHol&&!mins?'<div class="ct-hol">Holiday / Day off</div>':''}
     ${isFuture&&!mins?'<div class="ct-hol">Upcoming</div>':''}
     ${isAuto?'<div class="ct-auto">⚡ Auto-credited holiday hours</div>':''}
+    ${isSwap?'<div class="ct-auto">🔄 Weekend adjustment</div>':''}
     ${pIn?`<div class="ct-row"><span>▶ Punch In</span><strong>${pIn}</strong></div>`:''}
     ${pOut?`<div class="ct-row"><span>⏹ Punch Out</span><strong>${pOut}</strong></div>`:''}
     ${mins?`<div class="ct-row"><span>⏱ Duration</span><strong>${toHrsMin(mins)}</strong></div>`:(!isHol&&!isFuture?'<div class="ct-absent">No punch recorded</div>':'')}
@@ -1704,9 +1717,9 @@ async function loadSchedule() {
   if (!hasCached) $('tab-schedule').innerHTML=`<div class="loading-ph"><div class="spinner"></div></div>`;
   setLoading(true);
   try {
-    const [cR,sR]=await Promise.all([API.auth('getClassRoutine'),API.auth('getSettings')]);
+    const cR=await API.auth('getClassRoutine');
     S.classSlots=(cR.success&&cR.slots)||[];
-    if(sR.success) S.settings=sR.settings;
+    if(cR.success&&cR.settings) S.settings=cR.settings;
     renderScheduleTab();
     markTabFresh('schedule');
     cacheTabHtml('schedule');
@@ -1962,17 +1975,17 @@ async function loadSettings() {
   if (!hasCached) $('tab-settings').innerHTML=`<div class="loading-ph"><div class="spinner"></div></div>`;
   setLoading(true);
   try {
-    const [sR,gR,pR]=await Promise.all([API.auth('getSettings'),API.auth('getGovHols'),API.auth('getPersonalHols')]);
+    const [sR,gR,pR,wR]=await Promise.all([API.auth('getSettings'),API.auth('getGovHols'),API.auth('getPersonalHols'),API.auth('getWeekendAdjustments')]);
     if(sR.success){
       S.settings=sR.settings; _activeCycleType=sR.settings.cycleType||'weekly';
-      renderSettings(sR.settings,gR.holidays||[],pR.holidays||[]);
+      renderSettings(sR.settings,gR.holidays||[],pR.holidays||[],wR.success?wR.adjustments:[]);
       markTabFresh('settings'); cacheTabHtml('settings');
     } else if(!hasCached) showToast(sR.message,'error');
   } catch(err) { if(!hasCached) showToast('Failed to load settings','error'); }
   finally { setLoading(false); }
 }
 
-function renderSettings(cfg, govHols, persHols) {
+function renderSettings(cfg, govHols, persHols, weekendAdj) {
   const chk=(cfg.holidayDays||'').split(',').map(d=>d.trim());
   const today=dhakaDateStr(), isNDays=cfg.cycleType==='ndays';
   $('tab-settings').innerHTML=`
@@ -1983,7 +1996,7 @@ function renderSettings(cfg, govHols, persHols) {
       <div class="settings-grid">
         <div class="form-group"><label>Join Date</label><input type="date" id="s-join" class="input" value="${cfg.joinDate||''}" max="${today}"></div>
       </div>
-      <p class="hint-text">💡 No work or deductions are counted before this date.</p>
+      <p class="hint-text">💡 No work or deductions are counted before this date. If you join partway through a salary period, the missed days before your join date are prorated out of that period's pay — see Salary &amp; Deductions below.</p>
     </div>
 
     <div class="card">
@@ -2001,7 +2014,7 @@ function renderSettings(cfg, govHols, persHols) {
         <div class="form-group"><label>Max Hours / Single Day <span style="font-weight:400;text-transform:none">(caps counted hours)</span></label><input type="number" id="s-max-day" class="input" value="${cfg.maxDayHrs||''}" min="0" max="24" step="0.5" placeholder="No cap"></div>
       </div>
       <p class="hint-text">💡 <strong>Max Hours/Day</strong> caps how many hours in a single day count toward your target, stats, and salary — e.g. set it to <strong>10</strong> so working 11 hours still only counts as 10. Leave blank for no cap. <strong>Min Hours/${isNDays?'Cycle':'Week'}</strong>${isNDays?' — leave blank to auto-use 36h (or 42h if holidays are worked) per 7 days, scaled to your cycle length':''} drives both the salary-deduction threshold and the Schedule tab's suggested hours, so it always means the same number in both places.</p>
-      ${isNDays?`<p class="hint-text">💡 With "Allow working on holidays" ON, every calendar day counts toward the cycle — e.g. starting <strong>27 Jun</strong> with a 10-day cycle ends <strong>6 Jul</strong> (10 straight days). With it OFF, weekly off-days are skipped and the same cycle stretches to <strong>9 Jul</strong>.</p>`:''}
+      ${isNDays?`<p class="hint-text">💡 Cycles restart at each <strong>Salary Period Start Day</strong> (set below) and split it into equal ${cfg.cycleDays||10}-day chunks — any leftover working days fold into the <em>last</em> cycle of that period instead of forming a short trailing one. Example: a 31-day salary period with a 10-day cycle runs 10+10+11, not 10+10+10+1. That extended cycle's target scales up with it (11 days → 110% of your normal per-cycle target), so it's never mis-measured against the flat number.</p>`:''}
     </div>
 
     <div class="card">
@@ -2010,8 +2023,9 @@ function renderSettings(cfg, govHols, persHols) {
         <div class="form-group"><label>Monthly Gross Salary (BDT)</label><input type="number" id="s-salary" class="input" value="${cfg.salary||0}" min="0" step="500"></div>
         <div class="form-group"><label>Working Days / Month</label><input type="number" id="s-month-days" class="input" value="${cfg.monthDays||22}" min="18" max="31"></div>
         <div class="form-group"><label>Salary Period Start Day</label><input type="number" id="s-salary-start" class="input" value="${cfg.salaryCycleStart||1}" min="1" max="28"></div>
+        <div class="form-group"><label>Tax / Fixed Deduction (per period)</label><input type="number" id="s-tax" class="input" value="${cfg.taxAmount||0}" min="0" step="10"></div>
       </div>
-      <p class="hint-text">💡 <strong>25</strong> = salary period runs 25th → 24th of next month. <strong>1</strong> = standard calendar month.</p>
+      <p class="hint-text">💡 <strong>25</strong> = salary period runs 25th → 24th of next month. <strong>1</strong> = standard calendar month. <strong>Tax/Fixed Deduction</strong> is a flat amount (e.g. tax, provident fund) taken out every salary period regardless of hours worked — leave at 0 to skip it.</p>
     </div>
 
     <div class="card">
@@ -2051,7 +2065,19 @@ function renderSettings(cfg, govHols, persHols) {
         <strong>${chk.length}</strong> ${chk.length===1?'day':'days'} off per week
         ${chk.length?`<span style="color:var(--txt3);margin-left:6px">(${chk.join(', ')})</span>`:''}
       </div>
-      <p class="hint-text">💡 Uncheck a day here to make it a normal working day permanently — it will never be treated as a holiday, regardless of the toggle above. Checked days are holidays; when "Allow working on holidays" is OFF they're excluded from all calculations, and when ON they're folded in as normal days.</p>
+      <p class="hint-text">💡 Uncheck a day here to make it a normal working day permanently — it will never be treated as a holiday, regardless of the toggle above. Checked days are holidays; when "Allow working on holidays" is OFF they're excluded from all calculations, and when ON they're folded in as normal days. For a <strong>one-off</strong> swap instead of a permanent change — e.g. working this Friday and taking next Monday off instead — use Weekend Adjustment below.</p>
+    </div>
+
+    <div class="card">
+      <h3 class="section-title">🔄 Weekend Adjustment</h3>
+      <p class="hint-text" style="margin-top:0;margin-bottom:12px">Working a normal off-day this once? Pick that date, then pick the working day you're taking off in exchange — the swap applies to just that pair of dates. Hours you punch on the swapped day count toward your target normally; the date on the punch record itself isn't moved.</p>
+      <div class="form-row">
+        <div class="form-group"><label>Off-day you're working</label><input type="date" id="wa-weekend" class="input"></div>
+        <div class="form-group"><label>Working day taken off instead</label><input type="date" id="wa-offday" class="input"></div>
+        <div class="form-group"><label>Note (optional)</label><input type="text" id="wa-note" class="input" placeholder="e.g. Eid coverage"></div>
+      </div>
+      <button class="btn btn-primary" onclick="addWeekendAdj()">+ Add Swap</button>
+      <div class="hols-list" style="margin-top:13px">${(weekendAdj||[]).length?weekendAdj.slice().sort((a,b)=>b.weekendDate.localeCompare(a.weekendDate)).map(w=>`<div class="hol-item"><div><strong>${fmtDateFull(w.weekendDate)}</strong> → working &nbsp;·&nbsp; <strong>${fmtDateFull(w.offDate)}</strong> → off${w.note?`<span class="hol-reason">· ${w.note}</span>`:''}</div><button class="btn-icon danger" onclick="removeWeekendAdj('${w.weekendDate}')">✕</button></div>`).join(''):`<p class="text-muted">No weekend adjustments set.</p>`}</div>
     </div>
 
     <div class="card">
@@ -2128,7 +2154,7 @@ async function saveSettings() {
     weekStart:$('s-week-start')?.value||'Sunday', salary:$('s-salary').value,
     monthDays:$('s-month-days').value, holidayDays:hd, joinDate:$('s-join').value,
     cycleType, cycleDays:$('s-cycle-days')?.value||10, salaryCycleStart:$('s-salary-start').value,
-    workOnHolidays, autoHolidayHrs
+    workOnHolidays, autoHolidayHrs, taxAmount:$('s-tax')?.value||0
   });
   if(res.success){ bustTab(); showToast('✅ Settings saved!','success'); S.settings=null; } else showToast(res.message,'error');
 }
@@ -2153,6 +2179,18 @@ async function removeGovHol(date) {
   if(!confirm('Remove this holiday?'))return;
   const res=await API.auth('removeGovHol',{date});
   if(res.success){showToast('Removed','info');loadSettings();}else showToast(res.message,'error');
+}
+async function addWeekendAdj() {
+  const weekendDate=$('wa-weekend').value, offDate=$('wa-offday').value, note=$('wa-note').value;
+  if(!weekendDate||!offDate){showToast('Both dates are required','error');return;}
+  if(weekendDate===offDate){showToast('Pick two different dates','error');return;}
+  const res=await API.auth('addWeekendAdjustment',{weekendDate,offDate,note});
+  if(res.success){showToast('✅ Weekend adjustment saved','success');bustTab('dashboard','history');loadSettings();}else showToast(res.message,'error');
+}
+async function removeWeekendAdj(weekendDate) {
+  if(!confirm('Remove this weekend adjustment?'))return;
+  const res=await API.auth('removeWeekendAdjustment',{weekendDate});
+  if(res.success){showToast('Removed','info');bustTab('dashboard','history');loadSettings();}else showToast(res.message,'error');
 }
 
 // ═══ ADMIN PAGE ═════════════════════════════════════════
