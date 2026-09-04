@@ -814,7 +814,7 @@ const $      = id => document.getElementById(id);
 const LS     = {get:k=>localStorage.getItem(k),set:(k,v)=>localStorage.setItem(k,v),del:k=>localStorage.removeItem(k)};
 const pMin   = t => { if(!t||typeof t!=='string') return 0; const [h,m]=t.split(':').map(Number); return h*60+(m||0); };
 const mToT   = m => `${pad(Math.floor(m/60))}:${pad(m%60)}`;
-const toHrsMin = m => { if(!m||isNaN(m)) return '—'; const h=Math.floor(m/60),mi=m%60; return h&&mi?`${h}h ${mi}m`:h?`${h}h`:`${mi}m`; };
+const toHrsMin = m => { if(m===null||m===undefined||isNaN(m)) return '—'; m=Math.round(m); const h=Math.floor(m/60),mi=m%60; return h&&mi?`${h}h ${mi}m`:h?`${h}h`:`${mi}m`; };
 const fmtRange = (s,e) => {
   const f = d => new Date(d+'T00:00:00').toLocaleDateString('en-BD',{month:'short',day:'numeric'});
   return `${f(s)} – ${new Date(e+'T00:00:00').toLocaleDateString('en-BD',{month:'short',day:'numeric',year:'numeric'})}`;
@@ -1289,16 +1289,16 @@ function renderDashboard(d) {
           <text x="58" y="70" text-anchor="middle" fill="var(--txt2)" font-size="9" font-weight="500">of target</text>
         </svg>
         <div class="ring-info">
-          <div class="ring-hours">${d.doneHrs}h <span>/ ${d.targetHrs}h</span></div>
+          <div class="ring-hours">${toHrsMin(d.doneMins)} <span>/ ${toHrsMin(d.targetMins)}</span></div>
           <div class="ring-cap">${periodLabel}</div>
           <div style="margin-top:4px;font-size:11.5px;color:var(--txt2)">${d.workedDays}/${d.wDaysInPeriod} days</div>
         </div>
       </div>
       <div class="mini-stats">
-        <div class="stat-card"><div class="stat-icon si-c">⏳</div><div><div class="stat-val">${d.leftHrs}h</div><div class="stat-lbl">Remaining</div></div></div>
+        <div class="stat-card"><div class="stat-icon si-c">⏳</div><div><div class="stat-val">${toHrsMin(d.leftMins)}</div><div class="stat-lbl">Remaining</div></div></div>
         <div class="stat-card"><div class="stat-icon si-a">📅</div><div><div class="stat-val">${d.daysLeft}</div><div class="stat-lbl">Days Left</div></div></div>
-        <div class="stat-card"><div class="stat-icon si-i">📈</div><div><div class="stat-val">${d.avgReqHrs}h</div><div class="stat-lbl">Avg Needed/Day</div></div></div>
-        <div class="stat-card"><div class="stat-icon si-g">✅</div><div><div class="stat-val">${d.avgDoneHrs}h</div><div class="stat-lbl">Avg Done/Day</div></div></div>
+        <div class="stat-card"><div class="stat-icon si-i">📈</div><div><div class="stat-val">${toHrsMin(d.avgReqMins)}</div><div class="stat-lbl">Avg Needed/Day</div></div></div>
+        <div class="stat-card"><div class="stat-icon si-g">✅</div><div><div class="stat-val">${toHrsMin(d.avgDoneMins)}</div><div class="stat-lbl">Avg Done/Day</div></div></div>
       </div>
     </div>
 
@@ -1338,6 +1338,10 @@ function renderDashboard(d) {
           const workOnHol = d.workOnHolidays;
           const holWorked = day.isHoliday && day.punchIn;
           const holAuto = day.isHoliday && day.isAutoCredit;
+          // Uses the account's own Min Hours/Day setting (not a hardcoded 8h)
+          // — this is a display indicator only; salary deductions are always
+          // computed in aggregate over the whole cycle/period, never per day.
+          const minDayMinsThreshold = (S.settings?.minDayHrs||8)*60;
           // Under workOnHolidays, a holiday with no punch/credit is just a normal
           // "no entry yet" working day — NOT a red "absent" cell — since the whole
           // point of the toggle is that holidays behave like ordinary days.
@@ -1353,7 +1357,7 @@ function renderDashboard(d) {
           const swapTag = day.isSwapped ? '<span style="color:var(--acc);font-size:7px;display:block;margin-top:1px;font-weight:700">🔄 SWAP</span>' : '';
           let bodyHtml;
           if(day.punchIn) {
-            bodyHtml = `<div class="day-in">▶ ${day.punchIn}</div><div class="day-out${!day.punchOut?' pending':''}">${day.punchOut?'⏹ '+day.punchOut:'● live'}</div><div class="day-hrs ${day.mins>0?(day.mins>=480?'hrs-ok':'hrs-low'):''}">${day.mins?toHrsMin(day.mins):'—'}</div>`;
+            bodyHtml = `<div class="day-in">▶ ${day.punchIn}</div><div class="day-out${!day.punchOut?' pending':''}">${day.punchOut?'⏹ '+day.punchOut:'● live'}</div><div class="day-hrs ${day.mins>0?(day.mins>=minDayMinsThreshold?'hrs-ok':'hrs-low'):''}">${day.mins?toHrsMin(day.mins):'—'}</div>`;
           } else if(holAuto) {
             bodyHtml = `<div class="day-hrs hrs-ok">${toHrsMin(day.mins)}</div><div class="day-auto-badge">⚡ Auto</div>`;
           } else if(day.isFuture) {
@@ -1384,9 +1388,9 @@ function renderDashboard(d) {
         ? `<p class="text-muted" style="font-size:12.5px">This salary period is entirely before your join date — nothing to calculate yet.</p>`
         : `<div class="lm-stats">
             <div><span>Work Days</span><strong>${lm.workDays??'—'}</strong></div>
-            <div><span>Done</span><strong>${lm.doneHrs??'—'}h</strong></div>
-            <div><span>Required</span><strong>${lm.reqHrs??'—'}h</strong></div>
-            <div><span>Shortfall</span><strong ${(lm.shortfallHrs||0)>0?'class="text-err"':''}>${lm.shortfallHrs??'—'}h</strong></div>
+            <div><span>Done</span><strong>${toHrsMin(lm.doneMins)}</strong></div>
+            <div><span>Required</span><strong>${toHrsMin(lm.reqMins)}</strong></div>
+            <div><span>Shortfall</span><strong ${(lm.shortfallMins||0)>0?'class="text-err"':''}>${toHrsMin(lm.shortfallMins)}</strong></div>
             ${(lm.hourDed||0)>0?`<div><span>Hour deduction</span><strong class="text-err">BDT ${lm.hourDed.toLocaleString()}</strong></div>`:''}
             ${(lm.dedHols||0)>0?`<div><span>Leave deduction (${lm.dedHols}d)</span><strong class="text-err">BDT ${lm.dedHolDed.toLocaleString()}</strong></div>`:''}
             ${(lm.preJoinDed||0)>0?`<div><span>Pre-join deduction (${lm.preJoinDays}d)</span><strong class="text-err">BDT ${lm.preJoinDed.toLocaleString()}</strong></div>`:''}
@@ -1684,7 +1688,7 @@ function renderHistory(history) {
             <span class="week-dates">${fmtRange(wk.start,wk.end)}</span>
           </div>
           <div class="week-right">
-            <div class="week-hrs">${wk.hrs}h <span class="wk-target">/ ${wk.targetHrs}h</span></div>
+            <div class="week-hrs">${toHrsMin(wk.mins)} <span class="wk-target">/ ${toHrsMin(wk.targetMins)}</span></div>
             <div class="wk-bar-out"><div class="wk-bar-in ${wk.met?'bar-ok':'bar-err'}" style="width:${wk.pct}%"></div></div>
             <span id="chev-${i}" class="week-chev">▼</span>
           </div>
@@ -1701,7 +1705,7 @@ function renderHistory(history) {
             </div>`).join('')}
           <div class="wk-sum">
             <span>${wk.worked}/${wk.wDays} days attended</span>
-            <span>${wk.hrs}h of ${wk.targetHrs}h (${wk.pct}%)</span>
+            <span>${toHrsMin(wk.mins)} of ${toHrsMin(wk.targetMins)} (${wk.pct}%)</span>
           </div>
         </div>
       </div>`).join('')}
@@ -1812,10 +1816,10 @@ function computeAndRenderSchedule() {
     return `<div class="sug-row"><div class="sug-day-name">${r.day}${r.cls.length?`<span class="badge badge-neu" style="font-size:10px">${r.cls.length} class${r.cls.length>1?'es':''}</span>`:''}</div><div style="font-size:11.5px;color:var(--txt2);margin-bottom:4px">Classes: ${classDesc}</div>${tlHtml}<div style="font-size:10.5px;color:var(--txt3)">Free window: ${r.fStart||'07:00'} – ${r.fEnd||'22:00'} (${toHrsMin(r.fMins||0)} available)</div>${slotHtml}</div>`;
   }).join('');
   const maxDayLabel = result.maxDayHrs ? `${result.maxDayHrs}h` : 'No cap';
-  el.innerHTML=`<div style="font-size:11.5px;color:var(--txt2);margin-bottom:13px">Work window: <strong>07:00 – 22:00</strong> · Min/day: <strong>${result.minDayHrs}h</strong> · Max/day: <strong>${maxDayLabel}</strong> · Min ${cfg.cycleType==='ndays'?'/cycle':'/week'}: <strong>${result.minWkHrs.toFixed(1)}h</strong> · Target: <strong>${result.tgtWkHrs}h</strong>${result.workOnHol?' · <span style="color:var(--acc)">holidays included</span>':''}</div>${rowsHtml}
+  el.innerHTML=`<div style="font-size:11.5px;color:var(--txt2);margin-bottom:13px">Work window: <strong>07:00 – 22:00</strong> · Min/day: <strong>${result.minDayHrs}h</strong> · Max/day: <strong>${maxDayLabel}</strong> · Min ${cfg.cycleType==='ndays'?'/cycle':'/week'}: <strong>${toHrsMin(result.minWk)}</strong> · Target: <strong>${toHrsMin(result.tgtWk)}</strong>${result.workOnHol?' · <span style="color:var(--acc)">holidays included</span>':''}</div>${rowsHtml}
     <div class="sug-total-bar ${result.belowMin?'card-warn':result.aboveTarget?'card-warn':'card-ok'}" style="margin-top:13px">
       <div><div class="sug-total-hrs">${toHrsMin(result.total)}<span style="font-size:13px;font-weight:400;color:var(--txt2)">/period</span></div><div class="sug-total-meta">Total hours (class + suggested work)</div></div>
-      <div style="text-align:right"><div style="font-size:12.5px;font-weight:600;color:${result.belowMin||result.aboveTarget?'var(--warn-l)':'var(--ok-l)'}">${result.belowMin?`⚠ ${toHrsMin(result.minWk-result.total)} short of ${result.minWkHrs.toFixed(1)}h min`:result.aboveTarget?`⚠ ${toHrsMin(result.total-result.tgtWk)} over ${result.tgtWkHrs}h target`:'✓ Meets requirements'}</div><div class="sug-total-meta">Min: ${result.minWkHrs.toFixed(1)}h | Target: ${result.tgtWkHrs}h</div></div>
+      <div style="text-align:right"><div style="font-size:12.5px;font-weight:600;color:${result.belowMin||result.aboveTarget?'var(--warn-l)':'var(--ok-l)'}">${result.belowMin?`⚠ ${toHrsMin(result.minWk-result.total)} short of ${toHrsMin(result.minWk)} min`:result.aboveTarget?`⚠ ${toHrsMin(result.total-result.tgtWk)} over ${toHrsMin(result.tgtWk)} target`:'✓ Meets requirements'}</div><div class="sug-total-meta">Min: ${toHrsMin(result.minWk)} | Target: ${toHrsMin(result.tgtWk)}</div></div>
     </div>
     <div style="margin-top:10px;text-align:right"><button class="btn btn-ghost" onclick="copyScheduleText()" style="font-size:11.5px">📋 Copy as Text</button></div>`;
 }
@@ -1963,7 +1967,7 @@ function copyScheduleText() {
     const classPart = r.classMins>0 ? `${toHrsMin(r.classMins)} class + ` : '';
     lines.push(`${r.day.padEnd(12)}: ${workPart} — total ${classPart}${r.wMins>0?toHrsMin(r.wMins)+' work':''} = ${toHrsMin(r.dayTotal)}`);
   });
-  lines.push('─'.repeat(40)); lines.push(`Total: ${toHrsMin(_schedResult.total)} | Min: ${_schedResult.minWkHrs.toFixed(1)}h | Target: ${_schedResult.tgtWkHrs}h`);
+  lines.push('─'.repeat(40)); lines.push(`Total: ${toHrsMin(_schedResult.total)} | Min: ${toHrsMin(_schedResult.minWk)} | Target: ${toHrsMin(_schedResult.tgtWk)}`);
   navigator.clipboard.writeText(lines.join('\n')).then(()=>showToast('Schedule copied!','success')).catch(()=>showToast('Copy failed','warn'));
 }
 
@@ -2263,3 +2267,4 @@ document.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
 </html>
+
