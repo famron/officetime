@@ -1483,12 +1483,18 @@ function buildDateItems(start, end, punches, weekendWorkedDates, replacementOffD
     const dayName=DNAMES[cur.getDay()];
     const punch=punches.find(p=>p.date===ds);
     const isSwapped=toWorkSet.has(ds)||toOffSet.has(ds);
-    // Weekend Adjustment swaps outrank the weekly pattern, same priority as
-    // the backend's isHolidayActive: a swapped-to-working date is never a
-    // holiday, a swapped-to-off date always is, regardless of workOnHolidays.
+    // Weekend Adjustment swaps outrank the weekly pattern for rawIsHoliday
+    // (the informational flag), same as the backend's isHolDate: a
+    // swapped-to-working date is never a holiday, a swapped-to-off date
+    // always is. But isHoliday (whether the date is EXCLUDED/skipped) still
+    // collapses to false whenever workOnHolidays is on, with NO exception
+    // for the replacement off-date — matching the backend's isHolidayActive,
+    // so that day stays in the stats and falls through to the same
+    // AutoHolidayHrs auto-credit an ordinary unpunched holiday gets, instead
+    // of silently disappearing.
     let rawIsHoliday, isHoliday;
     if(toWorkSet.has(ds)) { rawIsHoliday=false; isHoliday=false; }
-    else if(toOffSet.has(ds)) { rawIsHoliday=true; isHoliday=true; }
+    else if(toOffSet.has(ds)) { rawIsHoliday=true; isHoliday=!workOnHol; }
     else { rawIsHoliday=hdays.has(dayName); isHoliday=rawIsHoliday && !workOnHol; }
     const realMins = punch?(parseInt(punch.minutes)||0):0;
     // Effective minutes from backend (includes auto-credit) when available,
@@ -2267,4 +2273,3 @@ document.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
 </html>
-
